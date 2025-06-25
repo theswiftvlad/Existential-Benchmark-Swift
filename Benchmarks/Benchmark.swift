@@ -1,17 +1,4 @@
-import SwiftUI
 import Benchmark
-
-@main
-struct BenchmarksApp: App {
-    var body: some Scene {
-        WindowGroup {
-            Text("Benchmark")
-                .onAppear {
-                    start()
-                }
-        }
-    }
-}
 
 // MARK: — Protocol and types with fair comparison
 
