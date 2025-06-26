@@ -47,8 +47,8 @@ func start() {
     // —— 2) Any boxing & unboxing ——
     benchmark("Any boxing & unboxing Int anchored loop") {
         var sum = 0
+        let anyValue: Any = 42
         for _ in 0..<innerLoop {
-            let anyValue: Any = 42
             sum &+= (anyValue as! Int) + 1
         }
     }
@@ -65,15 +65,15 @@ func start() {
     // —— 4) AnyObject boxing & unboxing ——
     benchmark("AnyObject boxing & unboxing Box anchored loop") {
         var sum = 0
+        let anyObj: AnyObject = Box()
         for _ in 0..<innerLoop {
-            let anyObj: AnyObject = Box()
             sum &+= ((anyObj as! Box).v + 1)
         }
     }
 
     // —— 5) some P static dispatch with data access ——
     benchmark("some P value access anchored loop") {
-        let s: some P = 42
+        var s: some P = 42
         var sum = 0
         for _ in 0..<innerLoop {
             sum &+= s.value + 1
@@ -82,16 +82,17 @@ func start() {
 
     // —— 6) any P dynamic dispatch with data access ——
     benchmark("any P value access anchored loop") {
-        let p: any P = 42
+        var p: any P = 42
         var sum = 0
         for _ in 0..<innerLoop {
             sum &+= p.value + 1
         }
+        p = Box()
     }
 
     // —— 7) some P static dispatch with method call ——
     benchmark("some P method call anchored loop") {
-        let s: some P = 42
+        var s: some P = 42
         var sum = 0
         for _ in 0..<innerLoop {
             sum &+= s.getValue() + 1
@@ -100,25 +101,28 @@ func start() {
 
     // —— 8) any P dynamic dispatch with method call ——
     benchmark("any P method call anchored loop") {
-        let p: any P = 42
+        var p: any P = 42
         var sum = 0
         for _ in 0..<innerLoop {
             sum &+= p.getValue() + 1
         }
+        p = Box()
     }
 
     // —— 9) Box through any P value access (fair comparison) ——
     benchmark("any P Box value access anchored loop") {
-        let p: any P = Box()
+        var p: any P = Box()
         var sum = 0
         for _ in 0..<innerLoop { sum &+= p.value + 1 }
+        p = 42
     }
 
     // —— 10) Box method through any P (fair comparison) ——
     benchmark("any P Box method call anchored loop") {
-        let p: any P = Box()
+        var p: any P = Box()
         var sum = 0
         for _ in 0..<innerLoop { sum &+= p.getValue() + 1 }
+        p = 42
     }
 
     // —— 11) Mixed types through any P (real-world scenario) ——
@@ -144,7 +148,26 @@ func start() {
             sum2 &+= direct + 1
         }
     }
+    
+    benchmark("any P wrapped in class as dependency") {
+        let sut = Test(p: Box())
+        sut.run(iterations: innerLoop)
+    }
 
     print("Running benchmarks...")
     Benchmark.main()
+}
+
+final class Test {
+    
+    let p: any P
+    
+    init(p: any P) {
+        self.p = p
+    }
+    
+    func run(iterations: Int) {
+        var sum = 0
+        for _ in 0..<iterations { sum &+= p.getValue() + 1 }
+    }
 }
