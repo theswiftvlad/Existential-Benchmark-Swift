@@ -27,14 +27,48 @@ class Box: P {
     
     @inline(never)
     func getValue() -> Int { v }
+}
+
+// Global data to prevent compiler optimizations
+var globalMixedArray: [any P] = []
+
+@inline(never)
+func createRandomP(_ seed: Int) -> any P {
+    switch seed % 3 {
+    case 0: return 42
+    case 1: return S()
+    default: return Box()
+    }
+}
+
+// Prevent optimizer from removing sums
+@inline(never)
+func blackHole<T>(_ value: T) {
+    withUnsafePointer(to: value) { _ in }
+}
+
+final class Test {
+    let p: any P
+    
+    init(p: any P) {
+        self.p = p
+    }
     
     @inline(never)
-    func foo() {}
+    func run(iterations: Int) -> Int {
+        var sum = 0
+        for _ in 0..<iterations {
+            sum &+= p.getValue() + 1
+        }
+        return sum
+    }
 }
 
 func start() {
-    // How many inner calls per benchmark
     let innerLoop = 1_000_000
+    
+    // Prepare global data
+    globalMixedArray = (0..<100).map { createRandomP($0) }
 
     // —— 1) Raw Int addition (baseline) ——
     benchmark("Raw Int + anchored loop") {
@@ -42,6 +76,7 @@ func start() {
         for _ in 0..<innerLoop {
             sum &+= 42 + 1
         }
+        blackHole(sum)
     }
 
     // —— 2) Any boxing & unboxing ——
@@ -51,6 +86,7 @@ func start() {
         for _ in 0..<innerLoop {
             sum &+= (anyValue as! Int) + 1
         }
+        blackHole(sum)
     }
 
     // —— 3) Direct Box.v access ——
@@ -60,6 +96,7 @@ func start() {
         for _ in 0..<innerLoop {
             sum &+= box.v + 1
         }
+        blackHole(sum)
     }
 
     // —— 4) AnyObject boxing & unboxing ——
@@ -69,105 +106,94 @@ func start() {
         for _ in 0..<innerLoop {
             sum &+= ((anyObj as! Box).v + 1)
         }
+        blackHole(sum)
     }
 
     // —— 5) some P static dispatch with data access ——
     benchmark("some P value access anchored loop") {
-        var s: some P = 42
+        let s: some P = 42  // Use let, not var
         var sum = 0
         for _ in 0..<innerLoop {
             sum &+= s.value + 1
         }
+        blackHole(sum)
     }
 
-    // —— 6) any P dynamic dispatch with data access ——
-    benchmark("any P value access anchored loop") {
-        var p: any P = 42
+    // —— 6) any P dynamic dispatch (MISLEADING - compiler optimizes!) ——
+    benchmark("any P value access (MISLEADING - optimized)") {
+        let p: any P = 42  // Compiler knows this is Int!
         var sum = 0
         for _ in 0..<innerLoop {
             sum &+= p.value + 1
         }
-        p = Box()
+        blackHole(sum)
     }
 
     // —— 7) some P static dispatch with method call ——
     benchmark("some P method call anchored loop") {
-        var s: some P = 42
+        let s: some P = 42
         var sum = 0
         for _ in 0..<innerLoop {
             sum &+= s.getValue() + 1
         }
+        blackHole(sum)
     }
 
-    // —— 8) any P dynamic dispatch with method call ——
-    benchmark("any P method call anchored loop") {
-        var p: any P = 42
+    // —— 8) any P dynamic dispatch (MISLEADING - compiler optimizes!) ——
+    benchmark("any P method call (MISLEADING - optimized)") {
+        let p: any P = 42  // Compiler knows this is Int!
         var sum = 0
         for _ in 0..<innerLoop {
             sum &+= p.getValue() + 1
         }
-        p = Box()
+        blackHole(sum)
     }
 
-    // —— 9) Box through any P value access (fair comparison) ——
-    benchmark("any P Box value access anchored loop") {
-        var p: any P = Box()
+    // —— 9) any P from global array (REALISTIC!) ——
+    benchmark("any P from global array (REALISTIC)") {
         var sum = 0
-        for _ in 0..<innerLoop { sum &+= p.value + 1 }
-        p = 42
+        let arraySize = globalMixedArray.count
+        for i in 0..<innerLoop {
+            let obj = globalMixedArray[i % arraySize]
+            sum &+= obj.value + 1
+        }
+        blackHole(sum)
     }
 
-    // —— 10) Box method through any P (fair comparison) ——
-    benchmark("any P Box method call anchored loop") {
-        var p: any P = Box()
+    // —— 10) any P created dynamically (REALISTIC!) ——
+    benchmark("any P created dynamically (REALISTIC)") {
         var sum = 0
-        for _ in 0..<innerLoop { sum &+= p.getValue() + 1 }
-        p = 42
+        for i in 0..<innerLoop {
+            let obj = createRandomP(i)
+            sum &+= obj.getValue() + 1
+        }
+        blackHole(sum)
     }
 
     // —— 11) Mixed types through any P (real-world scenario) ——
     benchmark("any P mixed types anchored loop") {
         let objects: [any P] = [42, S(), Box()]
         var sum = 0
-        for _ in 0..<innerLoop {
+        for _ in 0..<innerLoop/3 {  // Divide by 3 since we process 3 items
             for obj in objects {
                 sum &+= obj.value + 1
             }
         }
+        blackHole(sum)
     }
 
-    // —— 12) Protocol witness table overhead ——
-    benchmark("any P Int vs direct Int comparison") {
-        let p: any P = 42
-        let direct = 42
-        var sum1 = 0
-        var sum2 = 0
-        
-        for _ in 0..<innerLoop/2 {
-            sum1 &+= p.value + 1
-            sum2 &+= direct + 1
-        }
-    }
-    
+    // —— 12) Class with stored any P (REALISTIC!) ——
     benchmark("any P wrapped in class as dependency") {
-        let sut = Test(p: Box())
-        sut.run(iterations: innerLoop)
+        let sut = Test(p: createRandomP(42))  // Unknown type at compile time
+        var sum = 0
+        for _ in 0..<innerLoop {
+            sum &+= sut.run(iterations: 1)
+        }
+        blackHole(sum)
     }
 
     print("Running benchmarks...")
+    print("NOTE: Tests 6 & 8 are misleading - compiler can optimize them!")
+    print("Tests 9, 10, 11, 12 show REAL any P performance.")
     Benchmark.main()
-}
-
-final class Test {
-    
-    let p: any P
-    
-    init(p: any P) {
-        self.p = p
-    }
-    
-    func run(iterations: Int) {
-        var sum = 0
-        for _ in 0..<iterations { sum &+= p.getValue() + 1 }
-    }
 }
